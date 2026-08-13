@@ -1,0 +1,20 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: distributed-cache
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  endpoint:
+    health:
+      show-details: always
+
+# Custom property, read directly by HealthController for now.
+# Later phases (ring membership, replication) will also read this
+# to know which node this instance represents.
+NODE_ID: ${NODE_ID:unknown-node}
