@@ -2,6 +2,7 @@ package com.saksham.distributedcache;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Entry point for a single cache node.
@@ -12,6 +13,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * every node is symmetric.
  */
 @SpringBootApplication
+@EnableScheduling
 public class DistributedCacheApplication {
 
     public static void main(String[] args) {

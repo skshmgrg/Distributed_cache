@@ -1,0 +1,53 @@
+package com.saksham.distributedcache.cache;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+
+/** Spring adapter that configures the local cache and schedules TTL cleanup. */
+@Service
+public class CacheService {
+
+    private final LruTtlCache cache;
+    private final Duration defaultTtl;
+    private final Clock clock;
+
+    public CacheService(
+            @Value("${cache.max-entries:1000}") int maxEntries,
+            @Value("${cache.default-ttl-seconds:3600}") long defaultTtlSeconds) {
+        this(maxEntries, Duration.ofSeconds(defaultTtlSeconds), Clock.systemUTC());
+    }
+
+    CacheService(int maxEntries, Duration defaultTtl, Clock clock) {
+        if (defaultTtl.isZero() || defaultTtl.isNegative()) {
+            throw new IllegalArgumentException("defaultTtl must be positive");
+        }
+        this.cache = new LruTtlCache(maxEntries, clock);
+        this.defaultTtl = defaultTtl;
+        this.clock = clock;
+    }
+
+    public void put(String key, JsonNode value, Duration ttl) {
+        Duration effectiveTtl = ttl == null ? defaultTtl : ttl;
+        cache.put(key, value, clock.instant().plus(effectiveTtl));
+    }
+
+    public Optional<LruTtlCache.CachedValue> get(String key) {
+        return cache.get(key);
+    }
+
+    public boolean delete(String key) {
+        return cache.delete(key);
+    }
+
+    @Scheduled(fixedDelayString = "${cache.expiry-sweep-ms:5000}")
+    public void removeExpiredEntries() {
+        cache.removeExpiredEntries();
+    }
+}
