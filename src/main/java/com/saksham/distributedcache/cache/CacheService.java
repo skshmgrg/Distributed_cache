@@ -20,12 +20,13 @@ public class CacheService {
 
     public CacheService(
             @Value("${cache.max-entries:1000}") int maxEntries,
-            @Value("${cache.default-ttl-seconds:3600}") long defaultTtlSeconds) {
-        this(maxEntries, Duration.ofSeconds(defaultTtlSeconds), Clock.systemUTC());
+            @Value("${cache.default-ttl-seconds:3600}") long defaultTtlSeconds,
+            Clock clock) {
+        this(maxEntries, Duration.ofSeconds(defaultTtlSeconds), clock);
     }
 
     CacheService(int maxEntries, Duration defaultTtl, Clock clock) {
-        if (defaultTtl.isZero() || defaultTtl.isNegative()) {
+        if (defaultTtl == null || defaultTtl.isZero() || defaultTtl.isNegative()) {
             throw new IllegalArgumentException("defaultTtl must be positive");
         }
         this.cache = new LruTtlCache(maxEntries, clock);
@@ -33,9 +34,13 @@ public class CacheService {
         this.clock = clock;
     }
 
+    public void set(String key, JsonNode value, Instant expiresAt) {
+        cache.put(key, value, expiresAt);
+    }
+
     public void put(String key, JsonNode value, Duration ttl) {
-        Duration effectiveTtl = ttl == null ? defaultTtl : ttl;
-        cache.put(key, value, clock.instant().plus(effectiveTtl));
+        Instant expiresAt = ttl == null ? clock.instant().plus(defaultTtl) : clock.instant().plus(ttl);
+        set(key, value, expiresAt);
     }
 
     public Optional<LruTtlCache.CachedValue> get(String key) {
@@ -46,7 +51,7 @@ public class CacheService {
         return cache.delete(key);
     }
 
-    @Scheduled(fixedDelayString = "${cache.expiry-sweep-ms:5000}")
+    @Scheduled(fixedDelayString = "${cache.ttl-sweep-interval-ms:5000}")
     public void removeExpiredEntries() {
         cache.removeExpiredEntries();
     }

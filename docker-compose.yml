@@ -4,9 +4,8 @@ version: "3.9"
 # each one a distinct "node" is only its NODE_ID and PORT env vars —
 # there is no separate coordinator service.
 #
-# In Phase 2 they each host an independent local cache. They don't know about
-# each other yet; that comes in Phase 3 (sharding/ring) and Phase 4
-# (replication).
+# Phase 3 gives each container the same consistent-hash ring. A public cache
+# request received by any node is forwarded only to the key's ring owner.
 
 services:
   node1:

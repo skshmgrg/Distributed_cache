@@ -32,6 +32,10 @@ public class LruTtlCache {
         tail.previous = head;
     }
 
+    public synchronized int size() {
+        return entries.size();
+    }
+
     public synchronized void put(String key, JsonNode value, Instant expiresAt) {
         Node existing = entries.get(key);
         if (existing != null) {
@@ -46,8 +50,10 @@ public class LruTtlCache {
         addAfterHead(node);
         if (entries.size() > capacity) {
             Node leastRecentlyUsed = tail.previous;
-            unlink(leastRecentlyUsed);
-            entries.remove(leastRecentlyUsed.key);
+            if (leastRecentlyUsed != null && leastRecentlyUsed != head) {
+                unlink(leastRecentlyUsed);
+                entries.remove(leastRecentlyUsed.key);
+            }
         }
     }
 
@@ -104,8 +110,13 @@ public class LruTtlCache {
     }
 
     private void unlink(Node node) {
+        if (node == null || node.previous == null || node.next == null) {
+            return;
+        }
         node.previous.next = node.next;
         node.next.previous = node.previous;
+        node.previous = null;
+        node.next = null;
     }
 
     private static final class Node {
@@ -122,7 +133,7 @@ public class LruTtlCache {
         }
 
         private boolean isExpired(Instant now) {
-            return !expiresAt.isAfter(now);
+            return expiresAt != null && !expiresAt.isAfter(now);
         }
     }
 

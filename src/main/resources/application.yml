@@ -14,9 +14,6 @@ management:
     health:
       show-details: always
 
-# Custom property, read directly by HealthController for now.
-# Later phases (ring membership, replication) will also read this
-# to know which node this instance represents.
 NODE_ID: ${NODE_ID:unknown-node}
 
 # Phase 2: a bounded in-memory cache for this node only. Values expire after
@@ -25,4 +22,25 @@ NODE_ID: ${NODE_ID:unknown-node}
 cache:
   max-entries: ${CACHE_MAX_ENTRIES:1000}
   default-ttl-seconds: ${CACHE_DEFAULT_TTL_SECONDS:3600}
-  expiry-sweep-ms: ${CACHE_EXPIRY_SWEEP_MS:5000}
+  ttl-sweep-interval-ms: ${CACHE_TTL_SWEEP_INTERVAL_MS:5000}
+  # Every container receives this identical, stable membership list. Docker
+  # service names are resolvable between containers on the compose network.
+  cluster:
+    node-id: ${NODE_ID:node1}
+    virtual-nodes: ${CACHE_VIRTUAL_NODES:128}
+    nodes:
+      - id: node1
+        internal-url: http://node1:8080
+        public-url: http://localhost:8081
+      - id: node2
+        internal-url: http://node2:8080
+        public-url: http://localhost:8082
+      - id: node3
+        internal-url: http://node3:8080
+        public-url: http://localhost:8083
+      - id: node4
+        internal-url: http://node4:8080
+        public-url: http://localhost:8084
+      - id: node5
+        internal-url: http://node5:8080
+        public-url: http://localhost:8085

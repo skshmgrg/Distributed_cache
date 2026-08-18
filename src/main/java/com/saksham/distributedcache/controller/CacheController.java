@@ -1,11 +1,12 @@
 package com.saksham.distributedcache.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.saksham.distributedcache.cache.CacheService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.saksham.distributedcache.cluster.CacheNode;
+import com.saksham.distributedcache.cluster.CacheRoutingService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,46 +15,68 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import java.time.Duration;
+import java.net.URI;
 import java.time.Instant;
 import java.util.Map;
 
-/** HTTP API for the local cache node. No routing or replication happens yet. */
+/** Public API. A request is handled locally only when this node owns its key. */
 @RestController
 @RequestMapping("/cache")
 public class CacheController {
+    private final CacheRoutingService routingService;
+    private final InternalCacheController localCache;
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
 
-    private final CacheService cacheService;
-
-    public CacheController(CacheService cacheService) {
-        this.cacheService = cacheService;
+    public CacheController(CacheRoutingService routingService, InternalCacheController localCache,
+                           ObjectMapper objectMapper) {
+        this.routingService = routingService;
+        this.localCache = localCache;
+        this.restClient = RestClient.create();
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/{key}")
-    public ResponseEntity<Map<String, Object>> put(
-            @PathVariable String key,
-            @Valid @RequestBody CachePutRequest request) {
-        cacheService.put(key, request.value(), request.ttlSeconds() == null
-                ? null : Duration.ofSeconds(request.ttlSeconds()));
-        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("key", key, "status", "stored"));
+    public ResponseEntity<?> put(@PathVariable String key, @Valid @RequestBody SetRequest request) {
+        return routingService.isLocalOwner(key) ? localCache.put(key, request) : forward(key, request, HttpMethod.POST);
     }
 
     @GetMapping("/{key}")
-    public ResponseEntity<CacheGetResponse> get(@PathVariable String key) {
-        return cacheService.get(key)
-                .map(value -> ResponseEntity.ok(new CacheGetResponse(key, value.value(), value.expiresAt())))
-                .orElseGet(() -> ResponseEntity.notFound().build());
+    public ResponseEntity<?> get(@PathVariable String key) {
+        return routingService.isLocalOwner(key) ? localCache.get(key) : forward(key, null, HttpMethod.GET);
     }
 
     @DeleteMapping("/{key}")
-    public ResponseEntity<Void> delete(@PathVariable String key) {
-        return cacheService.delete(key) ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+    public ResponseEntity<?> delete(@PathVariable String key) {
+        return routingService.isLocalOwner(key) ? localCache.delete(key) : forward(key, null, HttpMethod.DELETE);
     }
 
-    public record CachePutRequest(@NotNull JsonNode value, @Positive Long ttlSeconds) {
+    /** Lets a client discover the owner before issuing its cache operation. */
+    @GetMapping("/{key}/owner")
+    public Map<String, String> owner(@PathVariable String key) {
+        CacheNode owner = routingService.ownerOf(key);
+        return Map.of("key", key, "nodeId", owner.id(), "url", owner.publicUrl());
     }
 
-    public record CacheGetResponse(String key, JsonNode value, Instant expiresAt) {
+    private ResponseEntity<?> forward(String key, Object body, HttpMethod method) {
+        URI target = UriComponentsBuilder.fromUriString(routingService.ownerOf(key).internalUrl())
+                .pathSegment("internal", "cache", key).build().encode().toUri();
+        RestClient.RequestHeadersSpec<?> request = switch (method) {
+            case GET -> restClient.get().uri(target);
+            case DELETE -> restClient.delete().uri(target);
+            case POST -> restClient.post().uri(target).body(body);
+        };
+        return request.exchange((clientRequest, clientResponse) -> {
+            JsonNode responseBody = clientResponse.getBody() == null ? null : objectMapper.readTree(clientResponse.getBody());
+            return ResponseEntity.status(clientResponse.getStatusCode()).body(responseBody);
+        });
     }
+
+    private enum HttpMethod { GET, POST, DELETE }
+
+    public record SetRequest(@NotNull JsonNode value, @Positive Long ttlSeconds) { }
+    public record CacheGetResponse(String key, JsonNode value, Instant expiresAt, Long remainingTtlSeconds) { }
 }
