@@ -2,6 +2,8 @@ package com.saksham.distributedcache.cluster;
 
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 /** Provides the same key-to-owner decision on every cache node. */
 @Service
 public class CacheRoutingService {
@@ -18,4 +20,7 @@ public class CacheRoutingService {
 
     public CacheNode ownerOf(String key) { return ring.ownerOf(key); }
     public boolean isLocalOwner(String key) { return ownerOf(key).id().equals(properties.getNodeId()); }
+    public List<CacheNode> preferenceListFor(String key) {
+        return ring.preferenceList(key, properties.getReplicationFactor());
+    }
 }

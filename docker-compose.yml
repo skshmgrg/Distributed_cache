@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Five identical containers, each running the same jar. What makes
 # each one a distinct "node" is only its NODE_ID and PORT env vars —
 # there is no separate coordinator service.

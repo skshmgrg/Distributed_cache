@@ -37,6 +37,14 @@ public class InternalCacheController {
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("key", key, "status", "stored"));
     }
 
+    @PostMapping("/{key}/replica")
+    public ResponseEntity<Map<String, Object>> putReplica(@PathVariable String key,
+                                                           @Valid @RequestBody CacheController.SetRequest request) {
+        // A dedicated path makes replicated writes unambiguous and prevents
+        // recursive fan-out; it is clearer here than a routing header.
+        return put(key, request);
+    }
+
     @GetMapping("/{key}")
     public ResponseEntity<CacheController.CacheGetResponse> get(@PathVariable String key) {
         return cacheService.get(key)

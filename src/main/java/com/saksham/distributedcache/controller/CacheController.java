@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saksham.distributedcache.cluster.CacheNode;
 import com.saksham.distributedcache.cluster.CacheRoutingService;
+import com.saksham.distributedcache.cluster.ReplicationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -28,20 +29,30 @@ import java.util.Map;
 public class CacheController {
     private final CacheRoutingService routingService;
     private final InternalCacheController localCache;
+    private final ReplicationService replicationService;
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
     public CacheController(CacheRoutingService routingService, InternalCacheController localCache,
+                           ReplicationService replicationService,
                            ObjectMapper objectMapper) {
         this.routingService = routingService;
         this.localCache = localCache;
+        this.replicationService = replicationService;
         this.restClient = RestClient.create();
         this.objectMapper = objectMapper;
     }
 
     @PostMapping("/{key}")
     public ResponseEntity<?> put(@PathVariable String key, @Valid @RequestBody SetRequest request) {
-        return routingService.isLocalOwner(key) ? localCache.put(key, request) : forward(key, request, HttpMethod.POST);
+        if (!routingService.isLocalOwner(key)) {
+            return forward(key, request, HttpMethod.POST);
+        }
+        ResponseEntity<?> response = localCache.put(key, request);
+        if (response.getStatusCode().is2xxSuccessful()) {
+            replicationService.replicateAsync(key, request);
+        }
+        return response;
     }
 
     @GetMapping("/{key}")
@@ -61,9 +72,18 @@ public class CacheController {
         return Map.of("key", key, "nodeId", owner.id(), "url", owner.publicUrl());
     }
 
+    @GetMapping("/{key}/replicas")
+    public java.util.List<Map<String, String>> replicas(@PathVariable String key) {
+        return routingService.preferenceListFor(key).stream()
+                .map(node -> Map.of("nodeId", node.id(), "url", node.publicUrl()))
+                .toList();
+    }
+
     private ResponseEntity<?> forward(String key, Object body, HttpMethod method) {
         URI target = UriComponentsBuilder.fromUriString(routingService.ownerOf(key).internalUrl())
-                .pathSegment("internal", "cache", key).build().encode().toUri();
+                // Route a forwarded write through the owner's public handler so
+                // that only its primary-owner branch starts replication.
+                .pathSegment("cache", key).build().encode().toUri();
         RestClient.RequestHeadersSpec<?> request = switch (method) {
             case GET -> restClient.get().uri(target);
             case DELETE -> restClient.delete().uri(target);

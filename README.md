@@ -2,9 +2,9 @@
 
 A distributed, sharded, replicated in-memory cache built from scratch (no Redis under the hood), to understand how systems like Redis Cluster distribute data.
 
-## Status: Phase 3 sharded cache
+## Status: Phase 4 replicated cache
 
-Five cache containers form a consistent-hash ring. Each node has 128 virtual tokens, and every key maps deterministically to exactly one primary owner. A request may be sent to any exposed port: if that node is not the owner, it forwards the request directly to the owner. There is no fan-out or coordinator. Each owner keeps its own bounded LRU cache with per-entry TTL expiry.
+Five cache containers form a consistent-hash ring. Each node has 128 virtual tokens, and every key maps deterministically to one primary owner plus two distinct clockwise replica nodes. A request may be sent to any exposed port: if that node is not the owner, it forwards the request directly to the owner. The primary stores a write then asynchronously copies it to its replicas. There is no coordinator.
 
 ## Run it
 
@@ -41,6 +41,14 @@ To have a client choose the target before the cache operation, ask any node for 
 curl http://localhost:8081/cache/user:42/owner
 ```
 
+The complete primary-and-replica preference list is also available for inspection:
+
+```bash
+curl http://localhost:8081/cache/user:42/replicas
+```
+
+Replication is deliberately best-effort in this phase: a failed replica is logged but not retried, and there is no dead-node detection or hinted handoff yet. Reads always go to the primary owner; quorum reads are not implemented.
+
 A successful `GET` now returns the cached JSON value plus the expiry metadata:
 
 ```json
@@ -61,7 +69,7 @@ A successful `GET` now returns the cached JSON value plus the expiry metadata:
 1. **Docker pipeline working** — done
 2. **Single-node cache** — GET/SET/DELETE, LRU eviction, TTL expiry — done
 3. **Sharding across 5 nodes** — consistent hashing ring with virtual nodes — done
-4. **Replication** — each key copied to its primary plus two replica nodes
+4. **Replication** — each key copied to its primary plus two replica nodes — done
 5. **Failure detection + failover** — heartbeats and fallback to a live replica
 6. **Benchmarking** — throughput, latency, key movement, and recovery time
 7. **Docs + diagrams** — architecture diagrams and walkthrough

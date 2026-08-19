@@ -4,7 +4,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -35,6 +39,37 @@ public final class ConsistentHashRing {
         }
         var clockwise = tokens.ceilingEntry(hash(key));
         return (clockwise != null ? clockwise : tokens.firstEntry()).getValue();
+    }
+
+    /**
+     * Returns the primary followed by distinct physical nodes clockwise on the
+     * ring. Virtual-node duplicates are intentionally skipped.
+     */
+    public List<CacheNode> preferenceList(String key, int replicationFactor) {
+        if (replicationFactor < 1) {
+            throw new IllegalArgumentException("replicationFactor must be at least 1");
+        }
+
+        int distinctNodeCount = (int) tokens.values().stream().map(CacheNode::id).distinct().count();
+        int wanted = Math.min(replicationFactor, distinctNodeCount);
+        List<CacheNode> result = new ArrayList<>(wanted);
+        Set<String> includedIds = new HashSet<>();
+        var current = tokens.ceilingEntry(hash(key));
+        if (current == null) {
+            current = tokens.firstEntry();
+        }
+
+        // At most one pass of the token map is needed to encounter every node.
+        for (int visited = 0; visited < tokens.size() && result.size() < wanted; visited++) {
+            if (includedIds.add(current.getValue().id())) {
+                result.add(current.getValue());
+            }
+            current = tokens.higherEntry(current.getKey());
+            if (current == null) {
+                current = tokens.firstEntry();
+            }
+        }
+        return List.copyOf(result);
     }
 
     static long hash(String value) {

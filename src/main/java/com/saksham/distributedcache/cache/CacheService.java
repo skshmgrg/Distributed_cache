@@ -1,6 +1,7 @@
 package com.saksham.distributedcache.cache;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ public class CacheService {
     private final Duration defaultTtl;
     private final Clock clock;
 
+    @Autowired
     public CacheService(
             @Value("${cache.max-entries:1000}") int maxEntries,
             @Value("${cache.default-ttl-seconds:3600}") long defaultTtlSeconds,
