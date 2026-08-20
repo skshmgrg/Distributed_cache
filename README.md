@@ -2,9 +2,9 @@
 
 A distributed, sharded, replicated in-memory cache built from scratch (no Redis under the hood), to understand how systems like Redis Cluster distribute data.
 
-## Status: Phase 4 replicated cache
+## Status: Phase 5 failure detection and failover
 
-Five cache containers form a consistent-hash ring. Each node has 128 virtual tokens, and every key maps deterministically to one primary owner plus two distinct clockwise replica nodes. A request may be sent to any exposed port: if that node is not the owner, it forwards the request directly to the owner. The primary stores a write then asynchronously copies it to its replicas. There is no coordinator.
+Five cache containers form a consistent-hash ring. Each node has 128 virtual tokens, and every key maps deterministically to one primary owner plus two distinct clockwise replica nodes. Nodes heartbeat every peer and mark a peer dead after three consecutive missed checks. A request is routed to the first live node in the key's preference list, failing over to a live replica when its primary is down. The primary stores a write then asynchronously copies it to live replicas.
 
 ## Run it
 
@@ -47,7 +47,15 @@ The complete primary-and-replica preference list is also available for inspectio
 curl http://localhost:8081/cache/user:42/replicas
 ```
 
-Replication is deliberately best-effort in this phase: a failed replica is logged but not retried, and there is no dead-node detection or hinted handoff yet. Reads always go to the primary owner; quorum reads are not implemented.
+Inspect the local node's heartbeat view of the cluster:
+
+```bash
+curl http://localhost:8081/cache/cluster/status
+```
+
+Configure failure detection with `CACHE_HEARTBEAT_INTERVAL_MS` (default 2000) and `CACHE_HEARTBEAT_MISS_THRESHOLD` (default 3).
+
+Known limits: there is no hinted handoff, retry queue, or data backfill when a node rejoins. The detector is a simple local missed-heartbeat counter, not gossip or phi-accrual detection. Quorum reads and writes are not implemented.
 
 A successful `GET` now returns the cached JSON value plus the expiry metadata:
 
@@ -70,6 +78,6 @@ A successful `GET` now returns the cached JSON value plus the expiry metadata:
 2. **Single-node cache** — GET/SET/DELETE, LRU eviction, TTL expiry — done
 3. **Sharding across 5 nodes** — consistent hashing ring with virtual nodes — done
 4. **Replication** — each key copied to its primary plus two replica nodes — done
-5. **Failure detection + failover** — heartbeats and fallback to a live replica
+5. **Failure detection + failover** — heartbeats and fallback to a live replica — done
 6. **Benchmarking** — throughput, latency, key movement, and recovery time
 7. **Docs + diagrams** — architecture diagrams and walkthrough

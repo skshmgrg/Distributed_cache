@@ -43,7 +43,7 @@ public class ReplicationService {
 
     @Async("replicationExecutor")
     public void replicateAsync(String key, CacheController.SetRequest request) {
-        for (CacheNode node : routingService.preferenceListFor(key)) {
+        for (CacheNode node : routingService.livePreferenceListFor(key)) {
             if (node.id().equals(properties.getNodeId())) {
                 continue;
             }
@@ -52,7 +52,7 @@ public class ReplicationService {
             try {
                 restClient.post().uri(target).body(request).retrieve().toBodilessEntity();
             } catch (RuntimeException exception) {
-                // Hinted handoff / a retry queue is deliberately deferred to the failure phase.
+                // Hinted handoff / a retry queue and rejoin backfill are future work.
                 log.warn("Could not replicate key '{}' to node '{}'", key, node.id(), exception);
             }
         }

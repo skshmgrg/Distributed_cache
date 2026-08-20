@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saksham.distributedcache.cluster.CacheNode;
 import com.saksham.distributedcache.cluster.CacheRoutingService;
+import com.saksham.distributedcache.cluster.ClusterMembershipService;
 import com.saksham.distributedcache.cluster.ReplicationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,22 +32,25 @@ public class CacheController {
     private final CacheRoutingService routingService;
     private final InternalCacheController localCache;
     private final ReplicationService replicationService;
+    private final ClusterMembershipService membershipService;
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
     public CacheController(CacheRoutingService routingService, InternalCacheController localCache,
                            ReplicationService replicationService,
-                           ObjectMapper objectMapper) {
+                           ClusterMembershipService membershipService, ObjectMapper objectMapper,
+                           RestClient.Builder restClientBuilder) {
         this.routingService = routingService;
         this.localCache = localCache;
         this.replicationService = replicationService;
-        this.restClient = RestClient.create();
+        this.membershipService = membershipService;
+        this.restClient = restClientBuilder.build();
         this.objectMapper = objectMapper;
     }
 
     @PostMapping("/{key}")
     public ResponseEntity<?> put(@PathVariable String key, @Valid @RequestBody SetRequest request) {
-        if (!routingService.isLocalOwner(key)) {
+        if (!routingService.isLocalLiveTarget(key)) {
             return forward(key, request, HttpMethod.POST);
         }
         ResponseEntity<?> response = localCache.put(key, request);
@@ -57,12 +62,12 @@ public class CacheController {
 
     @GetMapping("/{key}")
     public ResponseEntity<?> get(@PathVariable String key) {
-        return routingService.isLocalOwner(key) ? localCache.get(key) : forward(key, null, HttpMethod.GET);
+        return routingService.isLocalLiveTarget(key) ? localCache.get(key) : forward(key, null, HttpMethod.GET);
     }
 
     @DeleteMapping("/{key}")
     public ResponseEntity<?> delete(@PathVariable String key) {
-        return routingService.isLocalOwner(key) ? localCache.delete(key) : forward(key, null, HttpMethod.DELETE);
+        return routingService.isLocalLiveTarget(key) ? localCache.delete(key) : forward(key, null, HttpMethod.DELETE);
     }
 
     /** Lets a client discover the owner before issuing its cache operation. */
@@ -79,8 +84,17 @@ public class CacheController {
                 .toList();
     }
 
+    @GetMapping("/cluster/status")
+    public java.util.List<ClusterMembershipService.MemberStatus> clusterStatus() {
+        return membershipService.status();
+    }
+
     private ResponseEntity<?> forward(String key, Object body, HttpMethod method) {
-        URI target = UriComponentsBuilder.fromUriString(routingService.ownerOf(key).internalUrl())
+        CacheNode targetNode = routingService.liveTargetFor(key).orElse(null);
+        if (targetNode == null) {
+            return unavailable(key);
+        }
+        URI target = UriComponentsBuilder.fromUriString(targetNode.internalUrl())
                 // Route a forwarded write through the owner's public handler so
                 // that only its primary-owner branch starts replication.
                 .pathSegment("cache", key).build().encode().toUri();
@@ -89,10 +103,19 @@ public class CacheController {
             case DELETE -> restClient.delete().uri(target);
             case POST -> restClient.post().uri(target).body(body);
         };
-        return request.exchange((clientRequest, clientResponse) -> {
-            JsonNode responseBody = clientResponse.getBody() == null ? null : objectMapper.readTree(clientResponse.getBody());
-            return ResponseEntity.status(clientResponse.getStatusCode()).body(responseBody);
-        });
+        try {
+            return request.exchange((clientRequest, clientResponse) -> {
+                JsonNode responseBody = clientResponse.getBody() == null ? null : objectMapper.readTree(clientResponse.getBody());
+                return ResponseEntity.status(clientResponse.getStatusCode()).body(responseBody);
+            });
+        } catch (RuntimeException exception) {
+            return unavailable(key);
+        }
+    }
+
+    private ResponseEntity<Map<String, String>> unavailable(String key) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("key", key, "status", "no live cache node available"));
     }
 
     private enum HttpMethod { GET, POST, DELETE }

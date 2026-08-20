@@ -27,6 +27,8 @@ cache:
     node-id: ${NODE_ID:node1}
     virtual-nodes: ${CACHE_VIRTUAL_NODES:128}
     replication-factor: ${CACHE_REPLICATION_FACTOR:3}
+    heartbeat-interval-ms: ${CACHE_HEARTBEAT_INTERVAL_MS:2000}
+    heartbeat-miss-threshold: ${CACHE_HEARTBEAT_MISS_THRESHOLD:3}
     nodes:
       - id: node1
         internal-url: http://node1:8080

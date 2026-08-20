@@ -21,7 +21,8 @@ class ReplicationServiceTest {
     @Test
     void continuesReplicatingWhenOneReplicaFails() {
         CacheClusterProperties properties = properties();
-        CacheRoutingService routing = new CacheRoutingService(properties);
+        ClusterMembershipService membership = new ClusterMembershipService(properties, RestClient.create());
+        CacheRoutingService routing = new CacheRoutingService(properties, membership);
         String key = keyOwnedBy(routing, "node1");
         List<CacheNode> replicas = routing.preferenceListFor(key).stream()
                 .filter(node -> !node.id().equals("node1")).toList();
@@ -42,11 +43,34 @@ class ReplicationServiceTest {
         server.verify();
     }
 
+    @Test
+    void skipsReplicaMarkedDeadByMembership() {
+        CacheClusterProperties properties = properties();
+        ClusterMembershipService membership = new ClusterMembershipService(properties, RestClient.create());
+        CacheRoutingService routing = new CacheRoutingService(properties, membership);
+        String key = keyOwnedBy(routing, "node1");
+        CacheNode deadReplica = routing.preferenceListFor(key).get(1);
+        membership.recordHeartbeatFailure(deadReplica.id());
+        CacheNode liveReplica = routing.livePreferenceListFor(key).stream()
+                .filter(node -> !node.id().equals("node1")).findFirst().orElseThrow();
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(liveReplica.internalUrl() + "/internal/cache/" + key + "/replica"))
+                .andExpect(method(POST))
+                .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+        new ReplicationService(routing, properties, builder.build())
+                .replicateAsync(key, new CacheController.SetRequest(TextNode.valueOf("value"), 60L));
+
+        server.verify();
+    }
+
     private static CacheClusterProperties properties() {
         CacheClusterProperties properties = new CacheClusterProperties();
         properties.setNodeId("node1");
         properties.setVirtualNodes(16);
         properties.setReplicationFactor(3);
+        properties.setHeartbeatMissThreshold(1);
         properties.setNodes(List.of(
                 new CacheNode("node1", "http://node1:8080", "http://localhost:8081"),
                 new CacheNode("node2", "http://node2:8080", "http://localhost:8082"),
